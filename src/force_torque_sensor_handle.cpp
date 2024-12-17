@@ -516,7 +516,16 @@ void ForceTorqueSensorHandle::pullFTData(const ros::TimerEvent &event)
 
 
         if (ft_data_lock_.try_lock_for(std::chrono::milliseconds(1))) {
-            prefiltered_data_ = moving_mean_filtered_data;
+            if (!ongoing_offset_calculation) {
+                prefiltered_data_ = moving_mean_filtered_data;
+            } else {  // set to 0 if offset calculation is ongoing
+                prefiltered_data_.wrench.force.x = 0;
+                prefiltered_data_.wrench.force.y = 0;
+                prefiltered_data_.wrench.force.z = 0;
+                prefiltered_data_.wrench.torque.x = 0;
+                prefiltered_data_.wrench.torque.y = 0;
+                prefiltered_data_.wrench.torque.z = 0;
+            }
             ft_data_lock_.unlock();
         }
         else {
@@ -558,43 +567,43 @@ void ForceTorqueSensorHandle::filterFTData()
 
     transformed_data.header.stamp = filtered_data_input_.header.stamp;
     transformed_data.header.frame_id = transform_frame_;
-    if (transform_wrench(transform_frame_, node_params_.sensor_frame, filtered_data_input_.wrench, transformed_data.wrench))
+    if (transform_wrench(transform_frame_, node_params_.sensor_frame, filtered_data_input_.wrench,
+                         transformed_data.wrench))
     {
-      //gravity compensation
-      if(useGravityCompensator)
-      {
-          gravity_compensator_->update(transformed_data, gravity_compensated_force);
-      }
-      else gravity_compensated_force = transformed_data;
-
-      //treshhold filtering
-      if(useThresholdFilter)
-      {
-          threshold_filter_->update(gravity_compensated_force, threshold_filtered_force);
-      }
-      else threshold_filtered_force = gravity_compensated_force;
-
-      if(pub_params_.transformed_data)
-         if (transformed_data_pub_->trylock()){
-              transformed_data_pub_->msg_ = transformed_data;
-              transformed_data_pub_->unlockAndPublish();
-         }
-      if(pub_params_.gravity_compensated && useGravityCompensator)
-         if (gravity_compensated_pub_->trylock()){
-              gravity_compensated_pub_->msg_ = gravity_compensated_force;
-              gravity_compensated_pub_->unlockAndPublish();
-         }
-
-      if(pub_params_.threshold_filtered && useThresholdFilter)
-         if (threshold_filtered_pub_->trylock()){
-             threshold_filtered_pub_->msg_ = threshold_filtered_force;
-             threshold_filtered_pub_->unlockAndPublish();
+        //gravity compensation
+        if(useGravityCompensator)
+        {
+            gravity_compensator_->update(transformed_data, gravity_compensated_force);
         }
-      output_data = threshold_filtered_force;
+        else gravity_compensated_force = transformed_data;
+                
+        if(pub_params_.transformed_data)
+            if (transformed_data_pub_->trylock()){
+                transformed_data_pub_->msg_ = transformed_data;
+                transformed_data_pub_->unlockAndPublish();
+            }
+        if(pub_params_.gravity_compensated && useGravityCompensator)
+            if (gravity_compensated_pub_->trylock()){
+                gravity_compensated_pub_->msg_ = gravity_compensated_force;
+                gravity_compensated_pub_->unlockAndPublish();
+            }
     }
-    else {
-      output_data = moving_mean_filtered_data;
+    else gravity_compensated_force = filtered_data_input_;
+
+    //treshhold filtering
+    if(useThresholdFilter)
+    {
+        threshold_filter_->update(gravity_compensated_force, threshold_filtered_force);
     }
+    else threshold_filtered_force = gravity_compensated_force;
+
+    if(pub_params_.threshold_filtered && useThresholdFilter)
+        if (threshold_filtered_pub_->trylock()){
+            threshold_filtered_pub_->msg_ = threshold_filtered_force;
+            threshold_filtered_pub_->unlockAndPublish();
+    }
+    
+    output_data = threshold_filtered_force;
 }
 
 bool ForceTorqueSensorHandle::transform_wrench(std::string goal_frame, std::string source_frame, geometry_msgs::Wrench wrench, geometry_msgs::Wrench& transformed)
